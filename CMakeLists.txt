@@ -17,7 +17,6 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 set(SOURCES_COMMON
     src/file_io.cpp
     src/run_timestep_sim.cpp
-    src/run_realtime_sim.cpp
     src/cpu_sim.cpp
 )
 
@@ -40,22 +39,6 @@ else()
     add_executable(timestep_sim main/timestep_main.cpp ${SOURCES_COMMON})
     target_compile_definitions(timestep_sim PRIVATE USE_CUDA=0)
     set_target_properties(timestep_sim PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-    )
-endif()
-
-# Runtime executable
-if (USE_CUDA)
-    add_executable(runtime_sim_gpu main/runtime_main.cpp ${SOURCES_COMMON})
-    target_compile_definitions(runtime_sim_gpu PRIVATE USE_CUDA=1)
-    target_link_libraries(runtime_sim_gpu CUDA::cudart)
-    set_target_properties(runtime_sim_gpu PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-    )
-else()
-    add_executable(runtime_sim main/runtime_main.cpp ${SOURCES_COMMON})
-    target_compile_definitions(runtime_sim PRIVATE USE_CUDA=0)
-    set_target_properties(runtime_sim PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     )
 endif()
