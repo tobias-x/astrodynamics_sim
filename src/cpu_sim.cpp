@@ -1,180 +1,133 @@
 #include "cpu_sim.h"
 #include <cmath>
 #include <iostream>
-#include <vector>
 
-void CpuSim::runSim(const std::vector<Body>& bodies, double timeStep, int totalSteps, std::vector<SimulationResult>& results) const {
-    // Copy initial state
-    std::vector<Body> localBodies = bodies;
-    const double softening = 1e-5;
+static constexpr double G_CONST = 6.6743e-11;
+static constexpr double SOFTENING = 1e-5;
 
-    // For each simulation step
-    for (int step = 0; step < totalSteps; ++step) {
-        // Temporary containers for RK4 derivatives
-        std::vector<Body> newBodies(localBodies.size());
-        std::vector<Body> k1(localBodies.size());
-        std::vector<Body> k2(localBodies.size());
-        std::vector<Body> k3(localBodies.size());
-        std::vector<Body> k4(localBodies.size());
-        std::vector<Body> tempBodies(localBodies.size());
+void CpuSim::step(std::vector<Body>& bodies, double dt) const {
+    int n = bodies.size();
+    if (n == 0) return;
 
-        // --------------------------------------------
-        // k1: Evaluate derivatives at t
-        // For each body, dx/dt = vx and dv/dt = acceleration from localBodies.
-        for (size_t i = 0; i < localBodies.size(); ++i) {
-            k1[i].x = localBodies[i].vx;
-            k1[i].y = localBodies[i].vy;
-            k1[i].z = localBodies[i].vz;
-            
-            double ax = 0.0, ay = 0.0, az = 0.0;
-            for (size_t j = 0; j < localBodies.size(); ++j) {
-                if (i == j) continue;
-                double dx = localBodies[j].x - localBodies[i].x;
-                double dy = localBodies[j].y - localBodies[i].y;
-                double dz = localBodies[j].z - localBodies[i].z;
-                double distSq = dx*dx + dy*dy + dz*dz + softening;
-                double dist = std::sqrt(distSq);
-                double force = G * localBodies[j].mass / distSq;
-                ax += force * dx / dist;
-                ay += force * dy / dist;
-                az += force * dz / dist;
+    struct Deriv { double vx, vy, vz, ax, ay, az; };
+
+    std::vector<Deriv> k1(n), k2(n), k3(n), k4(n);
+    std::vector<Body> temp(n), next(n);
+
+    for (int i = 0; i < n; ++i) {
+        k1[i].vx = bodies[i].vx;
+        k1[i].vy = bodies[i].vy;
+        k1[i].vz = bodies[i].vz;
+        double ax = 0, ay = 0, az = 0;
+        for (int j = 0; j < n; ++j) if (i != j) {
+            double dx = bodies[j].x - bodies[i].x;
+            double dy = bodies[j].y - bodies[i].y;
+            double dz = bodies[j].z - bodies[i].z;
+            double distSq = dx * dx + dy * dy + dz * dz + SOFTENING;
+            double invDist = 1.0 / std::sqrt(distSq);
+            double f = G_CONST * bodies[j].mass * invDist * invDist;
+            ax += f * dx * invDist;
+            ay += f * dy * invDist;
+            az += f * dz * invDist;
+        }
+        k1[i].ax = ax; k1[i].ay = ay; k1[i].az = az;
+    }
+
+    auto compute = [&](const std::vector<Deriv>& kPrev, std::vector<Deriv>& kOut, double scale) {
+        for (int i = 0; i < n; ++i) {
+            temp[i].x = bodies[i].x + kPrev[i].vx * dt * scale;
+            temp[i].y = bodies[i].y + kPrev[i].vy * dt * scale;
+            temp[i].z = bodies[i].z + kPrev[i].vz * dt * scale;
+            temp[i].vx = bodies[i].vx + kPrev[i].ax * dt * scale;
+            temp[i].vy = bodies[i].vy + kPrev[i].ay * dt * scale;
+            temp[i].vz = bodies[i].vz + kPrev[i].az * dt * scale;
+            temp[i].mass = bodies[i].mass;
+        }
+        for (int i = 0; i < n; ++i) {
+            kOut[i].vx = temp[i].vx;
+            kOut[i].vy = temp[i].vy;
+            kOut[i].vz = temp[i].vz;
+            double ax = 0, ay = 0, az = 0;
+            for (int j = 0; j < n; ++j) if (i != j) {
+                double dx = temp[j].x - temp[i].x;
+                double dy = temp[j].y - temp[i].y;
+                double dz = temp[j].z - temp[i].z;
+                double distSq = dx * dx + dy * dy + dz * dz + SOFTENING;
+                double invDist = 1.0 / std::sqrt(distSq);
+                double f = G_CONST * temp[j].mass * invDist * invDist;
+                ax += f * dx * invDist;
+                ay += f * dy * invDist;
+                az += f * dz * invDist;
             }
-            k1[i].vx = ax;
-            k1[i].vy = ay;
-            k1[i].vz = az;
-            k1[i].mass = localBodies[i].mass;
+            kOut[i].ax = ax; kOut[i].ay = ay; kOut[i].az = az;
         }
+    };
 
-        // --------------------------------------------
-        // k2: Evaluate derivatives at t + dt/2 using state = localBodies + (dt/2)*k1
-        for (size_t i = 0; i < localBodies.size(); ++i) {
-            tempBodies[i].x  = localBodies[i].x  + (timeStep / 2.0) * k1[i].x;
-            tempBodies[i].y  = localBodies[i].y  + (timeStep / 2.0) * k1[i].y;
-            tempBodies[i].z  = localBodies[i].z  + (timeStep / 2.0) * k1[i].z;
-            tempBodies[i].vx = localBodies[i].vx + (timeStep / 2.0) * k1[i].vx;
-            tempBodies[i].vy = localBodies[i].vy + (timeStep / 2.0) * k1[i].vy;
-            tempBodies[i].vz = localBodies[i].vz + (timeStep / 2.0) * k1[i].vz;
-            tempBodies[i].mass = localBodies[i].mass;
-        }
-        for (size_t i = 0; i < localBodies.size(); ++i) {
-            k2[i].x = tempBodies[i].vx;
-            k2[i].y = tempBodies[i].vy;
-            k2[i].z = tempBodies[i].vz;
-            
-            double ax = 0.0, ay = 0.0, az = 0.0;
-            for (size_t j = 0; j < localBodies.size(); ++j) {
-                if (i == j) continue;
-                double dx = tempBodies[j].x - tempBodies[i].x;
-                double dy = tempBodies[j].y - tempBodies[i].y;
-                double dz = tempBodies[j].z - tempBodies[i].z;
-                double distSq = dx*dx + dy*dy + dz*dz + softening;
-                double dist = std::sqrt(distSq);
-                double force = G * tempBodies[j].mass / distSq;
-                ax += force * dx / dist;
-                ay += force * dy / dist;
-                az += force * dz / dist;
-            }
-            k2[i].vx = ax;
-            k2[i].vy = ay;
-            k2[i].vz = az;
-            k2[i].mass = tempBodies[i].mass;
-        }
+    compute(k1, k2, 0.5);
+    compute(k2, k3, 0.5);
+    compute(k3, k4, 1.0);
 
-        // --------------------------------------------
-        // k3: Evaluate derivatives at t + dt/2 using state = localBodies + (dt/2)*k2
-        for (size_t i = 0; i < localBodies.size(); ++i) {
-            tempBodies[i].x  = localBodies[i].x  + (timeStep / 2.0) * k2[i].x;
-            tempBodies[i].y  = localBodies[i].y  + (timeStep / 2.0) * k2[i].y;
-            tempBodies[i].z  = localBodies[i].z  + (timeStep / 2.0) * k2[i].z;
-            tempBodies[i].vx = localBodies[i].vx + (timeStep / 2.0) * k2[i].vx;
-            tempBodies[i].vy = localBodies[i].vy + (timeStep / 2.0) * k2[i].vy;
-            tempBodies[i].vz = localBodies[i].vz + (timeStep / 2.0) * k2[i].vz;
-            tempBodies[i].mass = localBodies[i].mass;
-        }
-        for (size_t i = 0; i < localBodies.size(); ++i) {
-            k3[i].x = tempBodies[i].vx;
-            k3[i].y = tempBodies[i].vy;
-            k3[i].z = tempBodies[i].vz;
-            
-            double ax = 0.0, ay = 0.0, az = 0.0;
-            for (size_t j = 0; j < localBodies.size(); ++j) {
-                if (i == j) continue;
-                double dx = tempBodies[j].x - tempBodies[i].x;
-                double dy = tempBodies[j].y - tempBodies[i].y;
-                double dz = tempBodies[j].z - tempBodies[i].z;
-                double distSq = dx*dx + dy*dy + dz*dz + softening;
-                double dist = std::sqrt(distSq);
-                double force = G * tempBodies[j].mass / distSq;
-                ax += force * dx / dist;
-                ay += force * dy / dist;
-                az += force * dz / dist;
-            }
-            k3[i].vx = ax;
-            k3[i].vy = ay;
-            k3[i].vz = az;
-            k3[i].mass = tempBodies[i].mass;
-        }
+    for (int i = 0; i < n; ++i) {
+        next[i].name = bodies[i].name;
+        next[i].mass = bodies[i].mass;
+        next[i].x = bodies[i].x + dt / 6.0 * (k1[i].vx + 2 * k2[i].vx + 2 * k3[i].vx + k4[i].vx);
+        next[i].y = bodies[i].y + dt / 6.0 * (k1[i].vy + 2 * k2[i].vy + 2 * k3[i].vy + k4[i].vy);
+        next[i].z = bodies[i].z + dt / 6.0 * (k1[i].vz + 2 * k2[i].vz + 2 * k3[i].vz + k4[i].vz);
+        next[i].vx = bodies[i].vx + dt / 6.0 * (k1[i].ax + 2 * k2[i].ax + 2 * k3[i].ax + k4[i].ax);
+        next[i].vy = bodies[i].vy + dt / 6.0 * (k1[i].ay + 2 * k2[i].ay + 2 * k3[i].ay + k4[i].ay);
+        next[i].vz = bodies[i].vz + dt / 6.0 * (k1[i].az + 2 * k2[i].az + 2 * k3[i].az + k4[i].az);
+    }
 
-        // --------------------------------------------
-        // k4: Evaluate derivatives at t + dt using state = localBodies + dt*k3
-        for (size_t i = 0; i < localBodies.size(); ++i) {
-            tempBodies[i].x  = localBodies[i].x  + timeStep * k3[i].x;
-            tempBodies[i].y  = localBodies[i].y  + timeStep * k3[i].y;
-            tempBodies[i].z  = localBodies[i].z  + timeStep * k3[i].z;
-            tempBodies[i].vx = localBodies[i].vx + timeStep * k3[i].vx;
-            tempBodies[i].vy = localBodies[i].vy + timeStep * k3[i].vy;
-            tempBodies[i].vz = localBodies[i].vz + timeStep * k3[i].vz;
-            tempBodies[i].mass = localBodies[i].mass;
-        }
-        for (size_t i = 0; i < localBodies.size(); ++i) {
-            k4[i].x = tempBodies[i].vx;
-            k4[i].y = tempBodies[i].vy;
-            k4[i].z = tempBodies[i].vz;
-            
-            double ax = 0.0, ay = 0.0, az = 0.0;
-            for (size_t j = 0; j < localBodies.size(); ++j) {
-                if (i == j) continue;
-                double dx = tempBodies[j].x - tempBodies[i].x;
-                double dy = tempBodies[j].y - tempBodies[i].y;
-                double dz = tempBodies[j].z - tempBodies[i].z;
-                double distSq = dx*dx + dy*dy + dz*dz + softening;
-                double dist = std::sqrt(distSq);
-                double force = G * tempBodies[j].mass / distSq;
-                ax += force * dx / dist;
-                ay += force * dy / dist;
-                az += force * dz / dist;
-            }
-            k4[i].vx = ax;
-            k4[i].vy = ay;
-            k4[i].vz = az;
-            k4[i].mass = tempBodies[i].mass;
-        }
+    bodies = std::move(next);
+}
 
-        // --------------------------------------------
-        // Combine increments to update the state:
-        // new_state = old_state + (dt/6)*(k1 + 2*k2 + 2*k3 + k4)
-        for (size_t i = 0; i < localBodies.size(); ++i) {
-            newBodies[i].x  = localBodies[i].x  + (timeStep / 6.0) * (k1[i].x  + 2.0 * k2[i].x  + 2.0 * k3[i].x  + k4[i].x);
-            newBodies[i].y  = localBodies[i].y  + (timeStep / 6.0) * (k1[i].y  + 2.0 * k2[i].y  + 2.0 * k3[i].y  + k4[i].y);
-            newBodies[i].z  = localBodies[i].z  + (timeStep / 6.0) * (k1[i].z  + 2.0 * k2[i].z  + 2.0 * k3[i].z  + k4[i].z);
-            newBodies[i].vx = localBodies[i].vx + (timeStep / 6.0) * (k1[i].vx + 2.0 * k2[i].vx + 2.0 * k3[i].vx + k4[i].vx);
-            newBodies[i].vy = localBodies[i].vy + (timeStep / 6.0) * (k1[i].vy + 2.0 * k2[i].vy + 2.0 * k3[i].vy + k4[i].vy);
-            newBodies[i].vz = localBodies[i].vz + (timeStep / 6.0) * (k1[i].vz + 2.0 * k2[i].vz + 2.0 * k3[i].vz + k4[i].vz);
-            newBodies[i].mass = localBodies[i].mass;
-
-            // Save the simulation result for this body and step.
+void CpuSim::runSim(const std::vector<Body>& bodies,
+                    double timeStep,
+                    int totalSteps,
+                    std::vector<SimulationResult>& results) const
+{
+    std::vector<Body> state = bodies;
+    for (int stepIndex = 0; stepIndex < totalSteps; ++stepIndex) {
+        step(state, timeStep);
+        for (int i = 0; i < (int)state.size(); ++i) {
             results.push_back({
-                step,
-                static_cast<int>(i),
-                newBodies[i].x,
-                newBodies[i].y,
-                newBodies[i].z,
-                newBodies[i].vx,
-                newBodies[i].vy,
-                newBodies[i].vz
+                stepIndex, i,
+                state[i].x, state[i].y, state[i].z,
+                state[i].vx, state[i].vy, state[i].vz
             });
         }
+    }
+}
 
-        localBodies = std::move(newBodies);
+void CpuSim::calcGrid(std::vector<GridBody>& gridBodies, const std::vector<Body>& bodies) const {
+    if (bodies.empty() || gridBodies.empty()) return;
+
+    const double soften = 1e-5; // small number to avoid divide-by-zero
+    const double baseMass = 1e28; // grid point mass
+
+    for (auto& gb : gridBodies) {
+        double weightedX = baseMass * gb.initial_x;
+        double weightedY = baseMass * gb.initial_y;
+        double weightedZ = baseMass * gb.initial_z;
+        double totalWeight = baseMass;
+
+        for (const auto& body : bodies) {
+            double dx = body.x - gb.initial_x;
+            double dy = body.y - gb.initial_y;
+            double dz = body.z - gb.initial_z;
+
+            double distance = std::abs(dx) + std::abs(dy) + std::abs(dz) + soften; // <<< NO square, NO sqrt, purely linear
+
+            double weight = body.mass / distance; // <<< LINEAR
+
+            weightedX += weight * body.x;
+            weightedY += weight * body.y;
+            weightedZ += weight * body.z;
+            totalWeight += weight;
+        }
+
+        gb.x = weightedX / totalWeight;
+        gb.y = weightedY / totalWeight;
+        gb.z = weightedZ / totalWeight;
     }
 }

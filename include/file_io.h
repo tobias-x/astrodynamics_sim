@@ -1,11 +1,6 @@
-#ifndef FILE_IO_H
-#define FILE_IO_H
-
-#include <string>
+#pragma once
 #include <vector>
-#include "simulation_common.h"
-
-std::vector<Body> parseConfig(const std::string& filename, int& referenceBody);
+#include <string>
+#include "types.h"
+std::vector<Body> parseConfig(const std::string& filename);
 void writeCSV(const std::vector<SimulationResult>& results, const std::string& filename);
-
-#endif // FILE_IO_H

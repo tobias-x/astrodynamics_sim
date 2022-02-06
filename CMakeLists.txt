@@ -1,51 +1,82 @@
 cmake_minimum_required(VERSION 3.18)
 
-# Project name and version
 project(GeodesicSim LANGUAGES CXX)
 
-# Option to enable CUDA support
+# ---------------------------------------------
+# macOS fixes: make sure <vector>, <string>, etc. are found
+if (APPLE)
+    message(STATUS "Detected macOS - setting up standard library paths")
+
+    execute_process(
+        COMMAND xcrun --show-sdk-path
+        OUTPUT_VARIABLE MACOSX_SYSROOT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+
+    set(CMAKE_OSX_SYSROOT ${MACOSX_SYSROOT})
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isysroot ${MACOSX_SYSROOT} -stdlib=libc++")
+endif()
+# ---------------------------------------------
+
 option(USE_CUDA "Enable CUDA support" OFF)
 
-# Set the C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
-# Common source files
+# Set up threading manually
+set(CMAKE_THREAD_LIBS_INIT "-lpthread")
+set(CMAKE_HAVE_THREADS_LIBRARY 1)
+set(CMAKE_USE_WIN32_THREADS_INIT 0)
+set(CMAKE_USE_PTHREADS_INIT 1)
+
+# Find dependencies
+find_package(OpenGL REQUIRED)
+find_package(GLEW REQUIRED)
+find_package(glfw3 REQUIRED)
+
+# Common sources
 set(SOURCES_COMMON
     src/file_io.cpp
-    src/run_timestep_sim.cpp
     src/cpu_sim.cpp
 )
 
-# Handle CUDA support
+# Optional CUDA sources
 if (USE_CUDA)
     enable_language(CUDA)
-    find_package(CUDAToolkit REQUIRED)
     list(APPEND SOURCES_COMMON src/cuda_sim.cu)
 endif()
 
-# Timestep executable
+# Main executable
+add_executable(geodesic_gl
+    src/main.cpp
+    src/simulation_engine.cpp
+    src/opengl_utils.cpp
+    src/renderer.cpp
+    ${SOURCES_COMMON}
+)
+
+# Link libraries
+target_link_libraries(geodesic_gl
+    PRIVATE
+        ${CMAKE_THREAD_LIBS_INIT}
+        OpenGL::GL
+        GLEW::GLEW
+        glfw
+)
+
+# If CUDA enabled
 if (USE_CUDA)
-    add_executable(timestep_sim_gpu main/timestep_main.cpp ${SOURCES_COMMON})
-    target_compile_definitions(timestep_sim_gpu PRIVATE USE_CUDA=1)
-    target_link_libraries(timestep_sim_gpu CUDA::cudart)
-    set_target_properties(timestep_sim_gpu PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-    )
-else()
-    add_executable(timestep_sim main/timestep_main.cpp ${SOURCES_COMMON})
-    target_compile_definitions(timestep_sim PRIVATE USE_CUDA=0)
-    set_target_properties(timestep_sim PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-    )
+    target_compile_definitions(geodesic_gl PRIVATE USE_CUDA=1)
+    target_link_libraries(geodesic_gl PRIVATE CUDA::cudart)
 endif()
 
-# Print a summary
-if (USE_CUDA)
-    message(STATUS "Building with CUDA support: ON")
-else()
-    message(STATUS "Building with CUDA support: OFF")
-endif()
+# Output binary into bin/ folder
+set_target_properties(geodesic_gl PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+file(COPY shaders DESTINATION ${CMAKE_BINARY_DIR}/bin)
