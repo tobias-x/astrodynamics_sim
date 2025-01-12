@@ -1,0 +1,4 @@
+/Users/tobiasfranks/projects/geodesic_sim/build/CMakeFiles/timestep_sim.dir
+/Users/tobiasfranks/projects/geodesic_sim/build/CMakeFiles/runtime_sim.dir
+/Users/tobiasfranks/projects/geodesic_sim/build/CMakeFiles/edit_cache.dir
+/Users/tobiasfranks/projects/geodesic_sim/build/CMakeFiles/rebuild_cache.dir
